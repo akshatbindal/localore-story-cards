@@ -225,7 +225,7 @@ export async function generateStory(request: StoryRequest): Promise<StoryRespons
             input: `${card.imagePrompt}. Create a polished 16:9 cinematic travel story image with authentic local atmosphere, rich light, human-scale details, no logos, no readable text, no captions.`,
             response_format: {
               type: "image",
-              mime_type: "image/png",
+              mime_type: "image/jpeg",
               aspect_ratio: "16:9",
               image_size: "1K"
             }
