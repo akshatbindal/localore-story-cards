@@ -3,6 +3,7 @@ import { geminiStoryJsonSchema, storyResponseSchema, type StoryRequest, type Sto
 const INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const GEMINI_TIMEOUT_MS = 45_000;
 const IMAGE_CONCURRENCY = 2;
+const DEFAULT_IMAGE_MODELS = ["gemini-3.1-flash-lite-image", "gemini-3.1-flash-image"];
 
 type GeminiInteraction = {
   output_text?: string;
@@ -107,6 +108,11 @@ function extractImageDataUrl(interaction: GeminiInteraction) {
   return `data:${image.mime_type || "image/png"};base64,${image.data}`;
 }
 
+function getImageModels() {
+  const configured = process.env.GEMINI_IMAGE_MODEL || DEFAULT_IMAGE_MODELS[0];
+  return Array.from(new Set([configured, ...DEFAULT_IMAGE_MODELS]));
+}
+
 function buildStoryPrompt(request: StoryRequest) {
   const locationSignal = request.coordinates
     ? `The user location coordinates are latitude ${request.coordinates.latitude}, longitude ${request.coordinates.longitude}, accuracy ${
@@ -168,7 +174,7 @@ function normalizeStory(story: Omit<StoryResponse, "generatedWith">): Omit<Story
 
 export async function generateStory(request: StoryRequest): Promise<StoryResponse> {
   const textModel = process.env.GEMINI_TEXT_MODEL || "gemini-3.1-flash-lite";
-  const imageModel = process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-lite-image";
+  const imageModels = getImageModels();
 
   const interaction = await createInteraction({
     model: textModel,
@@ -198,25 +204,27 @@ export async function generateStory(request: StoryRequest): Promise<StoryRespons
         return card;
       }
 
-      try {
-        const imageInteraction = await createInteraction({
-          model: imageModel,
-          store: false,
-          input: `${card.imagePrompt}. Create a polished 16:9 travel story card image with authentic atmosphere, no logos, no readable text, no extra captions.`,
-          response_format: {
-            type: "image",
-            mime_type: "image/png",
-            aspect_ratio: "16:9",
-            image_size: "1K"
+      for (const model of imageModels) {
+        try {
+          const imageInteraction = await createInteraction({
+            model,
+            store: false,
+            input: `${card.imagePrompt}. Create a polished 16:9 cinematic travel story image with authentic local atmosphere, rich light, human-scale details, no logos, no readable text, no captions.`,
+            response_format: {
+              type: "image",
+              mime_type: "image/png",
+              aspect_ratio: "16:9",
+              image_size: "1K"
+            }
+          });
+          const imageUrl = extractImageDataUrl(imageInteraction);
+          if (imageUrl) {
+            imageCount += 1;
+            return { ...card, imageUrl };
           }
-        });
-        const imageUrl = extractImageDataUrl(imageInteraction);
-        if (imageUrl) {
-          imageCount += 1;
-          return { ...card, imageUrl };
+        } catch (error) {
+          console.warn(`Image generation failed for ${card.id} with ${model}:`, error);
         }
-      } catch (error) {
-        console.warn(`Image generation failed for ${card.id}:`, error);
       }
 
       return card;
@@ -228,7 +236,7 @@ export async function generateStory(request: StoryRequest): Promise<StoryRespons
     cards,
     generatedWith: {
       textModel,
-      imageModel: request.includeImages ? imageModel : undefined,
+      imageModel: request.includeImages ? imageModels[0] : undefined,
       imageCount,
       mode: "gemini"
     }

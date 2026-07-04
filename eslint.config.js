@@ -29,6 +29,7 @@ export default [
         navigator: "readonly",
         process: "readonly",
         setTimeout: "readonly",
+        window: "readonly",
         setInterval: "readonly",
         clearTimeout: "readonly",
         clearInterval: "readonly"

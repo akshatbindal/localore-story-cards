@@ -1,6 +1,9 @@
 import { Languages, Volume2 } from "lucide-react";
+import { useEffect } from "react";
 import { getCardTone, getProgressLabel } from "../lib/story";
 import type { StoryResponse } from "../types";
+
+const AUTO_ADVANCE_MS = 5200;
 
 type StoryStageProps = {
   activeCard: number;
@@ -11,6 +14,18 @@ type StoryStageProps = {
 
 export function StoryStage({ activeCard, busy, onSelectCard, story }: StoryStageProps) {
   const active = story.cards[activeCard] || story.cards[0];
+
+  useEffect(() => {
+    if (busy || story.cards.length < 2) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      onSelectCard((activeCard + 1) % story.cards.length);
+    }, AUTO_ADVANCE_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [activeCard, busy, onSelectCard, story.cards.length]);
 
   return (
     <section className="story-stage" aria-live="polite" aria-busy={busy}>
