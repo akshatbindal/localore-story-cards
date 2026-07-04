@@ -163,6 +163,19 @@ function normalizeStory(story: Omit<StoryResponse, "generatedWith">): Omit<Story
         title,
         place,
         timeOfDay: card.timeOfDay?.trim() || `Stop ${index + 1}`,
+        narrative:
+          card.narrative?.trim() ||
+          `Explore ${place} through a short cultural stop shaped around local stories, food, language, and everyday life.`,
+        culturalInsight:
+          card.culturalInsight?.trim() ||
+          `This stop highlights how local heritage is carried through public spaces, craft, memory, and daily rituals.`,
+        hiddenGem: card.hiddenGem?.trim() || `Ask a local guide or shopkeeper for a quieter nearby lane or viewpoint around ${place}.`,
+        localPhrase: {
+          local: card.localPhrase?.local?.trim() || "Hello",
+          transliteration: card.localPhrase?.transliteration?.trim() || "hello",
+          meaning: card.localPhrase?.meaning?.trim() || "A friendly greeting",
+          usage: card.localPhrase?.usage?.trim() || "Use it when greeting someone respectfully."
+        },
         imageAlt: card.imageAlt?.trim() || `${place} cultural travel scene`,
         imagePrompt:
           card.imagePrompt?.trim() ||
