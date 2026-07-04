@@ -1,6 +1,8 @@
 import { geminiStoryJsonSchema, storyResponseSchema, type StoryRequest, type StoryResponse } from "./schemas";
 
 const INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
+const GEMINI_TIMEOUT_MS = 45_000;
+const IMAGE_CONCURRENCY = 2;
 
 type GeminiInteraction = {
   output_text?: string;
@@ -35,6 +37,9 @@ function requireKey() {
 }
 
 async function createInteraction(body: GeminiRequest): Promise<GeminiInteraction> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+
   const response = await fetch(INTERACTIONS_ENDPOINT, {
     method: "POST",
     headers: {
@@ -42,14 +47,35 @@ async function createInteraction(body: GeminiRequest): Promise<GeminiInteraction
       "x-goog-api-key": requireKey(),
       "Api-Revision": "2026-05-20"
     },
-    body: JSON.stringify(body)
-  });
+    body: JSON.stringify(body),
+    signal: controller.signal
+  }).finally(() => clearTimeout(timeout));
 
   const payload = (await response.json().catch(() => ({}))) as GeminiInteraction & { error?: { message?: string } };
   if (!response.ok) {
     throw new Error(payload.error?.message || `Gemini request failed with ${response.status}`);
   }
   return payload;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  mapper: (item: T, index: number) => Promise<R>
+) {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 function extractText(interaction: GeminiInteraction) {
@@ -139,8 +165,10 @@ export async function generateStory(request: StoryRequest): Promise<StoryRespons
     .parse(JSON.parse(text)) as Omit<StoryResponse, "generatedWith">;
 
   let imageCount = 0;
-  const cards = await Promise.all(
-    parsed.cards.map(async (card) => {
+  const cards = await mapWithConcurrency(
+    parsed.cards,
+    IMAGE_CONCURRENCY,
+    async (card) => {
       if (!request.includeImages) {
         return card;
       }
@@ -167,7 +195,7 @@ export async function generateStory(request: StoryRequest): Promise<StoryRespons
       }
 
       return card;
-    })
+    }
   );
 
   return storyResponseSchema.parse({

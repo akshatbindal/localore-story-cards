@@ -5,6 +5,7 @@ import { getCardTone, getProgressLabel } from "./lib/story";
 import type { Coordinates, StoryRequest, StoryResponse } from "./types";
 
 const interestOptions = ["heritage", "food", "hidden gems", "markets", "nature", "festivals"];
+const storyStorageKey = "localore:last-story";
 
 const starterStory: StoryResponse = {
   title: "A Day in Painted Light",
@@ -90,6 +91,15 @@ const starterStory: StoryResponse = {
   generatedWith: { textModel: "demo", imageCount: 0, mode: "demo" }
 };
 
+function readStoredStory() {
+  try {
+    const stored = localStorage.getItem(storyStorageKey);
+    return stored ? ({ ...starterStory, ...JSON.parse(stored) } as StoryResponse) : starterStory;
+  } catch {
+    return starterStory;
+  }
+}
+
 function App() {
   const [destination, setDestination] = useState("Jaipur, India");
   const [profile, setProfile] = useState<StoryRequest["travelerProfile"]>("first-time");
@@ -98,7 +108,7 @@ function App() {
   const [includeImages, setIncludeImages] = useState(true);
   const [coordinates, setCoordinates] = useState<Coordinates>();
   const [activeCard, setActiveCard] = useState(0);
-  const [story, setStory] = useState(starterStory);
+  const [story, setStory] = useState(readStoredStory);
   const [status, setStatus] = useState<"idle" | "locating" | "loading">("idle");
   const [error, setError] = useState("");
 
@@ -154,6 +164,7 @@ function App() {
         includeImages
       });
       setStory(nextStory);
+      localStorage.setItem(storyStorageKey, JSON.stringify(nextStory));
       setActiveCard(0);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to generate the story.");
@@ -251,7 +262,7 @@ function App() {
         {error ? <p className="error-message" role="alert">{error}</p> : null}
       </section>
 
-      <section className="story-stage" aria-live="polite">
+      <section className="story-stage" aria-live="polite" aria-busy={status === "loading"}>
         <header className="story-header">
           <div>
             <p className="eyebrow">{story.region}</p>
@@ -267,7 +278,11 @@ function App() {
         <div className="experience-grid">
           <article className="feature-card unfolding" style={getCardTone(active, activeCard)}>
             <div className={active.imageUrl ? "image-frame has-image" : "image-frame"} aria-label={active.imageAlt}>
-              {active.imageUrl ? <img src={active.imageUrl} alt={active.imageAlt} /> : <span>{active.place}</span>}
+              {active.imageUrl ? (
+                <img src={active.imageUrl} alt={active.imageAlt} decoding="async" loading="eager" />
+              ) : (
+                <span>{active.place}</span>
+              )}
             </div>
             <div className="card-copy">
               <p className="eyebrow">{getProgressLabel(activeCard, story.cards.length)} · {active.timeOfDay}</p>

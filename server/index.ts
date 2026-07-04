@@ -16,7 +16,10 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 const staticDir = path.resolve(dirname, "../dist");
 const requestWindowMs = 60_000;
 const maxRequestsPerWindow = 12;
+const storyCacheTtlMs = 10 * 60_000;
+const storyCacheMaxEntries = 8;
 const buckets = new Map<string, { count: number; resetAt: number }>();
+const storyCache = new Map<string, { expiresAt: number; story: unknown }>();
 
 app.use(
   cors({
@@ -24,6 +27,17 @@ app.use(
   })
 );
 app.use(express.json({ limit: "24kb" }));
+app.disable("x-powered-by");
+
+app.use((_req, res, next) => {
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; img-src 'self' data:; connect-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'"
+  );
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  next();
+});
 
 function rateLimit(req: express.Request, res: express.Response, next: express.NextFunction) {
   const key = req.ip || "anonymous";
@@ -45,6 +59,35 @@ function rateLimit(req: express.Request, res: express.Response, next: express.Ne
   next();
 }
 
+function getCacheKey(value: unknown) {
+  return JSON.stringify(value);
+}
+
+function getCachedStory(key: string) {
+  const cached = storyCache.get(key);
+  if (!cached) {
+    return undefined;
+  }
+
+  if (cached.expiresAt <= Date.now()) {
+    storyCache.delete(key);
+    return undefined;
+  }
+
+  return cached.story;
+}
+
+function cacheStory(key: string, story: unknown) {
+  if (storyCache.size >= storyCacheMaxEntries) {
+    const oldestKey = storyCache.keys().next().value;
+    if (oldestKey) {
+      storyCache.delete(oldestKey);
+    }
+  }
+
+  storyCache.set(key, { expiresAt: Date.now() + storyCacheTtlMs, story });
+}
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
@@ -52,13 +95,26 @@ app.get("/api/health", (_req, res) => {
 app.post("/api/story", rateLimit, async (req, res) => {
   try {
     const storyRequest = storyRequestSchema.parse(req.body);
+    const cacheKey = getCacheKey(storyRequest);
+    const cached = getCachedStory(cacheKey);
+
+    if (cached) {
+      res.setHeader("X-Localore-Cache", "HIT");
+      res.json(cached);
+      return;
+    }
 
     if (!process.env.GEMINI_API_KEY) {
-      res.json(buildDemoStory());
+      const story = buildDemoStory();
+      cacheStory(cacheKey, story);
+      res.setHeader("X-Localore-Cache", "MISS");
+      res.json(story);
       return;
     }
 
     const story = await generateStory(storyRequest);
+    cacheStory(cacheKey, story);
+    res.setHeader("X-Localore-Cache", "MISS");
     res.json(story);
   } catch (error) {
     if (error instanceof ZodError) {
@@ -73,8 +129,9 @@ app.post("/api/story", rateLimit, async (req, res) => {
   }
 });
 
-app.use(express.static(staticDir));
+app.use(express.static(staticDir, { maxAge: "1h", etag: true, index: false }));
 app.get("*", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
   res.sendFile(path.join(staticDir, "index.html"));
 });
 

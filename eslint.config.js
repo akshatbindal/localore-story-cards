@@ -21,11 +21,15 @@ export default [
         Buffer: "readonly",
         console: "readonly",
         document: "readonly",
+        DOMException: "readonly",
         fetch: "readonly",
         HTMLFormElement: "readonly",
+        localStorage: "readonly",
         navigator: "readonly",
         process: "readonly",
+        setTimeout: "readonly",
         setInterval: "readonly",
+        clearTimeout: "readonly",
         clearInterval: "readonly"
       }
     },
