@@ -144,6 +144,28 @@ Requirements:
 `;
 }
 
+function normalizeStory(story: Omit<StoryResponse, "generatedWith">): Omit<StoryResponse, "generatedWith"> {
+  return {
+    ...story,
+    cards: story.cards.map((card, index) => {
+      const place = card.place?.trim() || story.destination;
+      const title = card.title?.trim() || `${place} Story`;
+
+      return {
+        ...card,
+        id: card.id?.trim() || `card-${index + 1}`,
+        title,
+        place,
+        timeOfDay: card.timeOfDay?.trim() || `Stop ${index + 1}`,
+        imageAlt: card.imageAlt?.trim() || `${place} cultural travel scene`,
+        imagePrompt:
+          card.imagePrompt?.trim() ||
+          `Create a respectful cinematic travel image of ${place} for a cultural destination story, no readable text.`
+      };
+    })
+  };
+}
+
 export async function generateStory(request: StoryRequest): Promise<StoryResponse> {
   const textModel = process.env.GEMINI_TEXT_MODEL || "gemini-3.1-flash-lite";
   const imageModel = process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-lite-image";
@@ -162,7 +184,10 @@ export async function generateStory(request: StoryRequest): Promise<StoryRespons
   const text = extractText(interaction);
   const parsed = storyResponseSchema
     .omit({ generatedWith: true })
-    .parse(JSON.parse(text)) as Omit<StoryResponse, "generatedWith">;
+    .parse(normalizeStory(JSON.parse(text) as Omit<StoryResponse, "generatedWith">)) as Omit<
+    StoryResponse,
+    "generatedWith"
+  >;
 
   let imageCount = 0;
   const cards = await mapWithConcurrency(
