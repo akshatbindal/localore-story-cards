@@ -1,0 +1,183 @@
+import { geminiStoryJsonSchema, storyResponseSchema, type StoryRequest, type StoryResponse } from "./schemas";
+
+const INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
+
+type GeminiInteraction = {
+  output_text?: string;
+  output_image?: {
+    data?: string;
+    mime_type?: string;
+  };
+  steps?: Array<{
+    type?: string;
+    content?: Array<{
+      type?: string;
+      text?: string;
+      data?: string;
+      mime_type?: string;
+    }>;
+  }>;
+};
+
+type GeminiRequest = {
+  model: string;
+  input: string | Array<Record<string, unknown>>;
+  store?: boolean;
+  response_format?: Record<string, unknown> | Array<Record<string, unknown>>;
+};
+
+function requireKey() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not configured");
+  }
+  return apiKey;
+}
+
+async function createInteraction(body: GeminiRequest): Promise<GeminiInteraction> {
+  const response = await fetch(INTERACTIONS_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": requireKey(),
+      "Api-Revision": "2026-05-20"
+    },
+    body: JSON.stringify(body)
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as GeminiInteraction & { error?: { message?: string } };
+  if (!response.ok) {
+    throw new Error(payload.error?.message || `Gemini request failed with ${response.status}`);
+  }
+  return payload;
+}
+
+function extractText(interaction: GeminiInteraction) {
+  if (interaction.output_text) {
+    return interaction.output_text;
+  }
+
+  return (
+    interaction.steps
+      ?.flatMap((step) => step.content || [])
+      .filter((content) => content.type === "text")
+      .map((content) => content.text || "")
+      .join("\n")
+      .trim() || ""
+  );
+}
+
+function extractImageDataUrl(interaction: GeminiInteraction) {
+  const image =
+    interaction.output_image ||
+    interaction.steps
+      ?.flatMap((step) => step.content || [])
+      .find((content) => content.type === "image" && content.data);
+
+  if (!image?.data) {
+    return undefined;
+  }
+
+  return `data:${image.mime_type || "image/png"};base64,${image.data}`;
+}
+
+function buildStoryPrompt(request: StoryRequest) {
+  const locationSignal = request.coordinates
+    ? `The user location coordinates are latitude ${request.coordinates.latitude}, longitude ${request.coordinates.longitude}, accuracy ${
+        request.coordinates.accuracy || "unknown"
+      } meters.`
+    : "No browser coordinates were provided.";
+
+  const destinationSignal = request.destination
+    ? `The user requested this destination: ${request.destination}.`
+    : "Infer a nearby culturally meaningful destination from the coordinates, locale, and timezone.";
+
+  return `
+You are Localore, a culturally careful travel storyteller.
+
+Create a destination discovery story that helps a traveler engage with local culture in meaningful ways.
+Return only JSON matching the schema.
+
+Traveler context:
+- ${destinationSignal}
+- ${locationSignal}
+- Browser locale: ${request.locale}
+- Timezone: ${request.timezone}
+- Traveler profile: ${request.travelerProfile}
+- Preferred pace: ${request.pace}
+- Interests: ${request.interests.join(", ")}
+
+Requirements:
+- Recommend recognizable attractions and specific hidden gems.
+- Include heritage context without stereotypes or invented sacred claims.
+- Include local event ideas that are plausible for the place, phrased as categories if exact dates are unknown.
+- Teach useful local phrases with transliteration, meaning, and when to use each phrase.
+- Create 4 to 6 story cards that unfold as a day or short journey.
+- Each imagePrompt must be safe for image generation, visually rich, place-specific, and avoid readable text.
+- If coordinates are not enough to infer a place, use the typed destination.
+`;
+}
+
+export async function generateStory(request: StoryRequest): Promise<StoryResponse> {
+  const textModel = process.env.GEMINI_TEXT_MODEL || "gemini-3.1-flash-lite";
+  const imageModel = process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-lite-image";
+
+  const interaction = await createInteraction({
+    model: textModel,
+    store: false,
+    input: buildStoryPrompt(request),
+    response_format: {
+      type: "text",
+      mime_type: "application/json",
+      schema: geminiStoryJsonSchema
+    }
+  });
+
+  const text = extractText(interaction);
+  const parsed = storyResponseSchema
+    .omit({ generatedWith: true })
+    .parse(JSON.parse(text)) as Omit<StoryResponse, "generatedWith">;
+
+  let imageCount = 0;
+  const cards = await Promise.all(
+    parsed.cards.map(async (card) => {
+      if (!request.includeImages) {
+        return card;
+      }
+
+      try {
+        const imageInteraction = await createInteraction({
+          model: imageModel,
+          store: false,
+          input: `${card.imagePrompt}. Create a polished 16:9 travel story card image with authentic atmosphere, no logos, no readable text, no extra captions.`,
+          response_format: {
+            type: "image",
+            mime_type: "image/png",
+            aspect_ratio: "16:9",
+            image_size: "1K"
+          }
+        });
+        const imageUrl = extractImageDataUrl(imageInteraction);
+        if (imageUrl) {
+          imageCount += 1;
+          return { ...card, imageUrl };
+        }
+      } catch (error) {
+        console.warn(`Image generation failed for ${card.id}:`, error);
+      }
+
+      return card;
+    })
+  );
+
+  return storyResponseSchema.parse({
+    ...parsed,
+    cards,
+    generatedWith: {
+      textModel,
+      imageModel: request.includeImages ? imageModel : undefined,
+      imageCount,
+      mode: "gemini"
+    }
+  });
+}
