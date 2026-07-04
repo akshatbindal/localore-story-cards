@@ -18,6 +18,7 @@ export default [
         sourceType: "module"
       },
       globals: {
+        AbortController: "readonly",
         Buffer: "readonly",
         console: "readonly",
         document: "readonly",
